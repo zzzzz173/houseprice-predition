@@ -12,6 +12,11 @@ warnings.filterwarnings('ignore')
 DATA_HUB = dict()
 DATA_URL = 'http://d2l-data.s3-accelerate.amazonaws.com/'
 
+# 设置图片字体避免因字体不兼容而无法显示
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+
+#定义下载函数，将数据从kaggle中下载下来
 def download(name, cache_dir=os.path.join('..', 'data')):  # @save
     """下载一个DATA_HUB中的文件，返回本地文件名"""
     assert name in DATA_HUB, f"{name} 不存在于 {DATA_HUB}"
@@ -34,7 +39,7 @@ def download(name, cache_dir=os.path.join('..', 'data')):  # @save
         f.write(r.content)
     return fname
 
-
+#定义解压函数，下载后自动解压
 def download_extract(name, folder=None):  # @save
     """下载并解压zip/tar文件"""
     fname = download(name)
@@ -49,9 +54,9 @@ def download_extract(name, folder=None):  # @save
     fp.extractall(base_dir)
     return os.path.join(base_dir, folder) if folder else data_dir
 
-
+#下载DATA_HUB中的所有文件
 def download_all():  # @save
-    """下载DATA_HUB中的所有文件"""
+
     for name in DATA_HUB:
         download(name)
 
@@ -69,6 +74,7 @@ DATA_HUB['kaggle_house_train'] = (  # @save
 DATA_HUB['kaggle_house_test'] = (  # @save
     DATA_URL + 'kaggle_house_pred_test.csv',
     'fa19780a7b011d9b009e8bff8e99922a8ee2eb90')
+
 train_data = pd.read_csv(download('kaggle_house_train'))
 test_data = pd.read_csv(download('kaggle_house_test'))
 print(train_data.shape)
@@ -93,10 +99,12 @@ train_labels = torch.tensor(
 loss = nn.MSELoss()
 in_features = train_features.shape[1]
 
+
 def get_net():
     net = nn.Sequential(nn.Linear(in_features, 1))
     return net
 
+#定义损失函数rmse的log值函数
 def log_rmse(net, features, labels):
     # 为了在取对数时进一步稳定该值，将小于1的值设置为1
     clipped_preds = torch.clamp(net(features), 1, float('inf'))
@@ -104,7 +112,7 @@ def log_rmse(net, features, labels):
                            torch.log(labels)))
     return rmse.item()
 
-
+#定义训练函数
 def train(net, train_features, train_labels, test_features, test_labels,
           num_epochs, learning_rate, weight_decay, batch_size):
     train_ls, test_ls = [], []
@@ -124,6 +132,7 @@ def train(net, train_features, train_labels, test_features, test_labels,
             test_ls.append(log_rmse(net, test_features, test_labels))
     return train_ls, test_ls
 
+#K折验证
 def get_k_fold_data(k, i, X, y):
     assert k > 1
     fold_size = X.shape[0] // k
@@ -140,31 +149,175 @@ def get_k_fold_data(k, i, X, y):
             y_train = torch.cat([y_train, y_part], 0)
     return X_train, y_train, X_valid, y_valid
 
-def k_fold(k, X_train, y_train, num_epochs, learning_rate, weight_decay,
-           batch_size):
-    train_l_sum, valid_l_sum = 0, 0
+
+def plot_training_curves(train_ls, valid_ls=None):
+    """绘制训练和验证损失曲线"""
+    plt.figure(figsize=(10, 6))
+    epochs = range(1, len(train_ls) + 1)
+    plt.plot(epochs, train_ls, 'b-', label='训练损失')
+    if valid_ls:
+        plt.plot(epochs, valid_ls, 'r-', label='验证损失')
+    plt.title('训练过程中的损失变化', fontproperties='SimHei')
+    plt.xlabel('轮次', fontproperties='SimHei')
+    plt.ylabel('对数均方根误差', fontproperties='SimHei')
+    plt.legend(prop={'family': 'SimHei'})
+    plt.grid(True)
+    plt.savefig('training_loss.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+#可视化图像的定义，预测值和真实值的对比图
+def plot_prediction_analysis(predictions, true_values):
+    """绘制预测值与真实值的对比分析"""
+    plt.figure(figsize=(12, 8))
+
+    plt.subplot(2, 2, 1)
+    plt.scatter(true_values, predictions, alpha=0.5)
+    plt.plot([true_values.min(), true_values.max()],
+             [true_values.min(), true_values.max()],
+             'r--', lw=2)
+    plt.xlabel('真实房价', fontproperties='SimHei')
+    plt.ylabel('预测房价', fontproperties='SimHei')
+    plt.title('预测值 vs 真实值', fontproperties='SimHei')
+
+    plt.subplot(2, 2, 2)
+    errors = predictions - true_values
+    plt.hist(errors, bins=50)
+    plt.xlabel('预测误差', fontproperties='SimHei')
+    plt.ylabel('频率', fontproperties='SimHei')
+    plt.title('预测误差分布', fontproperties='SimHei')
+
+    plt.subplot(2, 2, 3)
+    plt.scatter(predictions, errors, alpha=0.5)
+    plt.axhline(y=0, color='r', linestyle='--')
+    plt.xlabel('预测值', fontproperties='SimHei')
+    plt.ylabel('残差', fontproperties='SimHei')
+    plt.title('残差分布', fontproperties='SimHei')
+
+    plt.tight_layout()
+    plt.savefig('prediction_analysis.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+#绘制损失分布图
+def plot_loss_distribution(train_losses, valid_losses):
+    """绘制所有折的损失分布"""
+    plt.figure(figsize=(12, 5))
+
+    plt.subplot(1, 2, 1)
+    for i, losses in enumerate(train_losses):
+        plt.plot(losses, alpha=0.5, label=f'折 {i + 1}')
+    plt.title('各折训练损失曲线', fontproperties='SimHei')
+    plt.xlabel('轮次', fontproperties='SimHei')
+    plt.ylabel('损失', fontproperties='SimHei')
+    plt.legend(prop={'family': 'SimHei'})
+
+    plt.subplot(1, 2, 2)
+    for i, losses in enumerate(valid_losses):
+        plt.plot(losses, alpha=0.5, label=f'折 {i + 1}')
+    plt.title('各折验证损失曲线', fontproperties='SimHei')
+    plt.xlabel('轮次', fontproperties='SimHei')
+    plt.ylabel('损失', fontproperties='SimHei')
+    plt.legend(prop={'family': 'SimHei'})
+
+    plt.tight_layout()
+    plt.savefig('loss_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_feature_importance_boxplot(train_data, features, target='SalePrice'):
+    """绘制特征重要性箱线图"""
+    plt.figure(figsize=(15, 6))
+
+    # 选择数值型特征
+    numeric_features = train_data.select_dtypes(include=['int64', 'float64']).columns
+    valid_features = [f for f in features if f in numeric_features]
+
+    # 创建箱线图
+    data = [train_data[feature] for feature in valid_features]
+    plt.boxplot(data, labels=valid_features)
+    plt.xticks(rotation=45)
+    plt.title('主要特征的分布')
+    plt.ylabel('值')
+
+    plt.tight_layout()
+    plt.savefig('feature_boxplot.png')
+    plt.close()
+
+
+def plot_learning_curves(train_losses, valid_losses):
+    """绘制平均学习曲线"""
+    plt.figure(figsize=(10, 6))
+
+    # 计算平均损失
+    avg_train = np.mean(train_losses, axis=0)
+    avg_valid = np.mean(valid_losses, axis=0)
+    std_train = np.std(train_losses, axis=0)
+    std_valid = np.std(valid_losses, axis=0)
+    epochs = range(1, len(avg_train) + 1)
+
+    # 绘制平均损失曲线及其标准差范围
+    plt.plot(epochs, avg_train, 'b-', label='平均训练损失')
+    plt.fill_between(epochs, avg_train - std_train, avg_train + std_train, alpha=0.1, color='b')
+    plt.plot(epochs, avg_valid, 'r-', label='平均验证损失')
+    plt.fill_between(epochs, avg_valid - std_valid, avg_valid + std_valid, alpha=0.1, color='r')
+
+    plt.title('平均学习曲线')
+    plt.xlabel('轮次')
+    plt.ylabel('损失')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig('learning_curves.png')
+    plt.close()
+
+
+def train_and_analyze(k, X_train, y_train, num_epochs, learning_rate, weight_decay, batch_size):
+    """训练模型并进行分析"""
+    train_losses = []
+    valid_losses = []
+
     for i in range(k):
         data = get_k_fold_data(k, i, X_train, y_train)
         net = get_net()
-        train_ls, valid_ls = train(net, *data, num_epochs, learning_rate,
-                                   weight_decay, batch_size)
-        train_l_sum += train_ls[-1]
-        valid_l_sum += valid_ls[-1]
-        if i == 0:
-            d2l.plot(list(range(1, num_epochs + 1)), [train_ls, valid_ls],
-                     xlabel='epoch', ylabel='rmse', xlim=[1, num_epochs],
-                     legend=['train', 'valid'], yscale='log')
+        train_ls, valid_ls = train(net, *data, num_epochs, learning_rate, weight_decay, batch_size)
+
+        train_losses.append(train_ls)
+        valid_losses.append(valid_ls)
+
+        # 绘制每折的训练曲线
+        plot_training_curves(train_ls, valid_ls)
+
+        # 进行预测并分析
+        with torch.no_grad():
+            train_pred = net(data[0]).numpy()
+            valid_pred = net(data[2]).numpy()
+            plot_prediction_analysis(valid_pred, data[3].numpy())
 
         print(f'折{i + 1}，训练log rmse{float(train_ls[-1]):f}, '
               f'验证log rmse{float(valid_ls[-1]):f}')
-    return train_l_sum / k, valid_l_sum / k
+
+    # 添加新的可视化
+    plot_loss_distribution(train_losses, valid_losses)
+    plot_learning_curves(train_losses, valid_losses)
+    plot_feature_importance_boxplot(train_data,
+                                    ['GrLivArea', 'TotalBsmtSF', 'OverallQual', 'YearBuilt'])
+
+    # 计算并打印统计信息
+    avg_train_loss = sum([ls[-1] for ls in train_losses]) / k
+    avg_valid_loss = sum([ls[-1] for ls in valid_losses]) / k
+
+    print(f'\n{k}-折交叉验证结果:')
+    print(f'平均训练log rmse: {avg_train_loss:.4f}')
+    print(f'平均验证log rmse: {avg_valid_loss:.4f}')
+
+    return train_losses, valid_losses
 
 
-k, num_epochs, lr, weight_decay, batch_size = 5, 100, 5, 0, 64
-train_l, valid_l = k_fold(k, train_features, train_labels, num_epochs, lr,
-                          weight_decay, batch_size)
-print(f'{k}-折验证: 平均训练log rmse: {float(train_l):f}, '
-      f'平均验证log rmse: {float(valid_l):f}')
+# 在主程序中调用，以参数初值的定义
+if __name__ == '__main__':
+    k, num_epochs, lr, weight_decay, batch_size = 10, 100, 5, 0, 64
+    train_losses, valid_losses = train_and_analyze(k, train_features, train_labels,
+                                                   num_epochs, lr, weight_decay, batch_size)
 
 
 # 首先定义所有可视化函数
@@ -202,6 +355,7 @@ def plot_price_distribution(train_data):
     plt.xlabel('价格')
     plt.ylabel('频率')
     plt.show()
+
 
 def plot_scatter_features(train_data, features, target='SalePrice'):
     """绘制重要特征与房价的散点图"""
